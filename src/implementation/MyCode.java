@@ -13,11 +13,16 @@ import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
+import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.DSAPublicKey;
+import java.security.interfaces.RSAPublicKey;
+import java.util.Collection;
 import java.util.Enumeration;
 import java.util.Set;
 
@@ -52,28 +57,27 @@ public class MyCode extends CodeV3 {
 	private KeyStore myKeyStore;
 	private char[] password = "root".toCharArray();
 	private Enumeration<String> keyPairs; 
-
+	private File fileKeyStore = new File("lokKeyStore.p12");
+	
 	public MyCode(boolean[] algorithm_conf, boolean[] extensions_conf, boolean extensions_rules) throws GuiException {
 		super(algorithm_conf, extensions_conf, extensions_rules);
+		Security.addProvider(new BouncyCastleProvider());
 	}
 	
 	@Override
-	public Enumeration<String> loadLocalKeystore() {
-		
-		Security.addProvider(new BouncyCastleProvider());
-		
+	public Enumeration<String> loadLocalKeystore() {	
 		try {
-			myKeyStore = KeyStore.getInstance("pkcs12", "BC");
+			myKeyStore = KeyStore.getInstance("pkcs12");
 			File fileKeyStore = new File("lokKeyStore.p12");
 			if(fileKeyStore.exists()){
-				FileInputStream fis = new FileInputStream("lokKeyStore.p12");
+				FileInputStream fis = new FileInputStream(fileKeyStore);
 				myKeyStore.load(fis, password);
 			}else{
 				myKeyStore.load(null, null);
 			}
 			keyPairs = myKeyStore.aliases();
 			return keyPairs;
-		} catch (KeyStoreException | IOException | NoSuchAlgorithmException | CertificateException | NoSuchProviderException e) {
+		} catch (KeyStoreException | IOException | NoSuchAlgorithmException | CertificateException e) {
 			
 			e.printStackTrace();
 			System.out.println("Error: loadLocalKeystore");
@@ -83,11 +87,11 @@ public class MyCode extends CodeV3 {
 	}
 	public void resetLocalKeystore() {
 		try {
-			File fileKeyStore = new File("lokKeyStore.p12");
-			fileKeyStore.delete();			
-			fileKeyStore.createNewFile();
+			myKeyStore = KeyStore.getInstance("pkcs12");
 			myKeyStore.load(null, password);
-			keyPairs=myKeyStore.aliases();
+			keyPairs=null;
+			FileOutputStream fos = new FileOutputStream(fileKeyStore);
+			myKeyStore.store(fos, password);
 			
 		} catch (IOException | NoSuchAlgorithmException | CertificateException | KeyStoreException e) {
 			e.printStackTrace();
@@ -136,7 +140,7 @@ public class MyCode extends CodeV3 {
 				if(access.getPublicKeyAlgorithm() != "DSA")
 					return false;
 				String subject = access.getSubject();
-				String serial = access.getSerialNumber();
+				String serial = access.getSerialNumber(); 
 				BigInteger serialNmbr = new BigInteger(serial);
 				X500NameBuilder builder = new X500NameBuilder();
 				
@@ -171,7 +175,7 @@ public class MyCode extends CodeV3 {
 				chain[0] = x500cert;
 				myKeyStore.setKeyEntry(keypair_name, keypair.getPrivate(),password, chain);
 				
-				FileOutputStream fos = new FileOutputStream("lokKeyStore.p12");
+				FileOutputStream fos = new FileOutputStream(fileKeyStore);
 				myKeyStore.store(fos, password);
 				
 				return myKeyStore.containsAlias(keypair_name);
@@ -186,12 +190,12 @@ public class MyCode extends CodeV3 {
 	public int loadKeypair(String keypair_name) {
 			try {
 				X509Certificate keypair = (X509Certificate) myKeyStore.getCertificate(keypair_name);
-				String issuer = keypair.getIssuerX500Principal().getName(X500Principal.RFC1779);
+				String issuer = keypair.getIssuerX500Principal().getName(X500Principal.RFC2253);
 				
 				access.setVersion(keypair.getVersion()-1);
-				access.setSerialNumber(keypair.getSerialNumber().toString() + "    " + issuer.toString());
-				System.out.println(keypair.getSubjectX500Principal().getName(X500Principal.RFC1779));
-				access.setSubject(keypair.getSubjectX500Principal().getName(X500Principal.RFC1779));
+				access.setSerialNumber(keypair.getSerialNumber().toString());
+				System.out.println(keypair.getSubjectX500Principal().getName(X500Principal.RFC2253));
+				access.setSubject(keypair.getSubjectX500Principal().getName(X500Principal.RFC2253));
 				access.setIssuer(issuer);
 				access.setSubjectSignatureAlgorithm(keypair.getPublicKey().getAlgorithm());
 				access.setIssuerSignatureAlgorithm(keypair.getSigAlgName());
@@ -211,7 +215,7 @@ public class MyCode extends CodeV3 {
 							access.setCritical(Constants.SAN, true);
 					}
 					*/
-				if(keypair.getSubjectX500Principal().equals(issuer))
+				if(keypair.getSubjectX500Principal().equals(keypair.getIssuerX500Principal()))
 					return 0;
 				if(myKeyStore.isKeyEntry(keypair_name))
 					return 2;
@@ -245,7 +249,7 @@ public class MyCode extends CodeV3 {
 					break;
 				}
 			}
-			FileOutputStream fos = new FileOutputStream("lokKeyStore.p12");
+			FileOutputStream fos = new FileOutputStream(fileKeyStore);
 			myKeyStore.store(fos, password);
 			return find;
 		} catch (KeyStoreException | NoSuchAlgorithmException | CertificateException | IOException | NoSuchProviderException | UnrecoverableKeyException e) {
@@ -259,7 +263,7 @@ public class MyCode extends CodeV3 {
 	public boolean removeKeypair(String keypair_name) {
 		try {
 			myKeyStore.deleteEntry(keypair_name);
-			FileOutputStream fos = new FileOutputStream("lokKeyStore");
+			FileOutputStream fos = new FileOutputStream(fileKeyStore);
 			myKeyStore.store(fos, password);
 			return true;
 		} catch (KeyStoreException | NoSuchAlgorithmException | CertificateException | IOException e) {
@@ -281,52 +285,120 @@ public class MyCode extends CodeV3 {
 			
 			FileOutputStream fos = new FileOutputStream(file);
 			temp.store(fos, password_t.toCharArray());
-			fos.close();
 			return true;
 			
 		} catch (KeyStoreException | NoSuchProviderException | NoSuchAlgorithmException | CertificateException | IOException | UnrecoverableKeyException e) {
+			e.printStackTrace();
+			return false;
+		}
+		
+	}
+//***********************************************************
+	@Override
+	public boolean canSign(String keypair_name) {
+		try {
+			X509Certificate certificate = (X509Certificate) myKeyStore.getCertificate(keypair_name);			
+			
+			if(certificate.getBasicConstraints() == -1){ //notCA
+				return false;
+			}
+			boolean[] keyusage = certificate.getKeyUsage();
+				if(keyusage == null)
+					return true;
+			
+			return keyusage[5];		 // keyusage[5] - cert signing			
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+			return false;
+		}
+	}
+//***********************************************************	
+	
+	@Override
+	public boolean importCertificate(String file, String keypair_name) {
+		try {
+			FileInputStream fis = new FileInputStream(file);
+			
+			if(myKeyStore.containsAlias(keypair_name))
+				return false;
+			 X509Certificate certificate =  (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(fis);
+			myKeyStore.setCertificateEntry(keypair_name, certificate);
+			FileOutputStream fos = new FileOutputStream(fileKeyStore);
+			myKeyStore.store(fos, password);
+			fis.close();
+			fos.close();
+			return true;
+		} catch (KeyStoreException | CertificateException | NoSuchAlgorithmException | IOException e) {
 			e.printStackTrace();
 		}
 		
 		return false;
 	}
-//***********************************************************	
+	
 	@Override
-	public boolean canSign(String arg0) {
-		// TODO Auto-generated method stub
+	public boolean exportCertificate(String arg0, String arg1, int arg2, int arg3) {
+		
 		return false;
 	}
+	
 
+//*************************************************************
+	@Override
+	public String getCertPublicKeyParameter(String keypair_name) {
+		try {
+			X509Certificate keypair = (X509Certificate) myKeyStore.getCertificate(keypair_name);
+			PublicKey publicKey = keypair.getPublicKey();
+			if(publicKey instanceof DSAPublicKey){
+				DSAPublicKey dsaKey = (DSAPublicKey) publicKey;
+				return Integer.toString(((DSAPublicKey) publicKey).getY().bitLength());
+			}
+			return null;
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+			return null;
+		}
+		
+		
+	}
+
+	@Override
+	public String getSubjectInfo(String keypair_name) {
+		try {
+			X509Certificate keypair = (X509Certificate) myKeyStore.getCertificate(keypair_name);
+			
+			String[] attributes = keypair.getSubjectDN().toString().split(",");
+			StringBuilder builder = new StringBuilder();
+			for(int i =0; i< attributes.length ;i++){
+				builder.append(attributes[i].trim());
+				if( i!= attributes.length - 1) builder.append(",");
+			}
+			
+			return  builder.toString();
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+		}
+		
+		return null;
+	}
+	
+	@Override
+	public String getCertPublicKeyAlgorithm(String keypair_name) {
+
+		try {
+			X509Certificate keypair = (X509Certificate) myKeyStore.getCertificate(keypair_name);
+			return keypair.getPublicKey().getAlgorithm();
+		} catch (KeyStoreException e) {
+			e.printStackTrace();
+			return null;
+		}
+	}
+
+//***************************************************************
+	
 	@Override
 	public boolean exportCSR(String arg0, String arg1, String arg2) {
 		// TODO Auto-generated method stub
 		return false;
-	}
-
-	@Override
-	public boolean exportCertificate(String arg0, String arg1, int arg2, int arg3) {
-		// TODO Auto-generated method stub
-		return false;
-	}
-
-
-
-	@Override
-	public String getCertPublicKeyAlgorithm(String arg0) {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	@Override
-	public String getCertPublicKeyParameter(String arg0) {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	@Override
-	public String getSubjectInfo(String arg0) {
-		// TODO Auto-generated method stub
-		return null;
 	}
 
 	@Override
@@ -340,17 +412,6 @@ public class MyCode extends CodeV3 {
 		// TODO Auto-generated method stub
 		return null;
 	}
-
-	@Override
-	public boolean importCertificate(String arg0, String arg1) {
-		// TODO Auto-generated method stub
-		return false;
-	}
-
-
-
-	
-	
 
 	@Override
 	public boolean signCSR(String arg0, String arg1, String arg2) {
