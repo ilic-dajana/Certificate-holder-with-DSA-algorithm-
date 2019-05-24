@@ -1,10 +1,12 @@
 package implementation;
 
+import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.math.BigInteger;
 import java.security.Key;
 import java.security.KeyPair;
@@ -17,9 +19,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.UnrecoverableKeyException;
-import java.security.cert.CertificateException;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
+import java.security.cert.*;
 import java.security.interfaces.DSAPublicKey;
 import java.security.interfaces.RSAPublicKey;
 import java.util.Collection;
@@ -40,14 +40,18 @@ import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNamesBuilder;
 import org.bouncycastle.cert.CertIOException;
+import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.cms.CMSException;
+import org.bouncycastle.cms.CMSSignedData;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
-import org.bouncycastle.x509.extension.X509ExtensionUtil;
+import org.bouncycastle.util.Store;
 
 import code.GuiException;
 import gui.Constants;
@@ -64,6 +68,7 @@ public class MyCode extends CodeV3 {
 		Security.addProvider(new BouncyCastleProvider());
 	}
 	
+//******************************************************KEYSTORE METHODS***************************************************************
 	@Override
 	public Enumeration<String> loadLocalKeystore() {	
 		try {
@@ -72,6 +77,7 @@ public class MyCode extends CodeV3 {
 			if(fileKeyStore.exists()){
 				FileInputStream fis = new FileInputStream(fileKeyStore);
 				myKeyStore.load(fis, password);
+				fis.close();
 			}else{
 				myKeyStore.load(null, null);
 			}
@@ -92,7 +98,7 @@ public class MyCode extends CodeV3 {
 			keyPairs=null;
 			FileOutputStream fos = new FileOutputStream(fileKeyStore);
 			myKeyStore.store(fos, password);
-			
+			fos.close();
 		} catch (IOException | NoSuchAlgorithmException | CertificateException | KeyStoreException e) {
 			e.printStackTrace();
 			System.out.println("Error: resetLocalKeystore");
@@ -100,6 +106,8 @@ public class MyCode extends CodeV3 {
 		
 	}
 	
+//******************************************************KEYPAIR METHODS***************************************************************
+
 	private void addCertificateExtensions(X509v3CertificateBuilder certBuilder, X509Certificate cert) throws IOException{
 		//******** SAN ********//
 		String[] names = access.getAlternativeName(Constants.SAN);
@@ -177,6 +185,7 @@ public class MyCode extends CodeV3 {
 				
 				FileOutputStream fos = new FileOutputStream(fileKeyStore);
 				myKeyStore.store(fos, password);
+				fos.close();
 				
 				return myKeyStore.containsAlias(keypair_name);
 			} catch (KeyStoreException | NoSuchAlgorithmException | NoSuchProviderException | OperatorCreationException | CertificateException | IOException e) {
@@ -194,7 +203,6 @@ public class MyCode extends CodeV3 {
 				
 				access.setVersion(keypair.getVersion()-1);
 				access.setSerialNumber(keypair.getSerialNumber().toString());
-				System.out.println(keypair.getSubjectX500Principal().getName(X500Principal.RFC2253));
 				access.setSubject(keypair.getSubjectX500Principal().getName(X500Principal.RFC2253));
 				access.setIssuer(issuer);
 				access.setSubjectSignatureAlgorithm(keypair.getPublicKey().getAlgorithm());
@@ -251,9 +259,11 @@ public class MyCode extends CodeV3 {
 			}
 			FileOutputStream fos = new FileOutputStream(fileKeyStore);
 			myKeyStore.store(fos, password);
+			fos.close();
 			return find;
 		} catch (KeyStoreException | NoSuchAlgorithmException | CertificateException | IOException | NoSuchProviderException | UnrecoverableKeyException e) {
 			e.printStackTrace();
+			System.out.println("Error: importKeypair");
 		}
 		
 		return false;
@@ -265,6 +275,7 @@ public class MyCode extends CodeV3 {
 			myKeyStore.deleteEntry(keypair_name);
 			FileOutputStream fos = new FileOutputStream(fileKeyStore);
 			myKeyStore.store(fos, password);
+			fos.close();
 			return true;
 		} catch (KeyStoreException | NoSuchAlgorithmException | CertificateException | IOException e) {
 			e.printStackTrace();
@@ -285,80 +296,150 @@ public class MyCode extends CodeV3 {
 			
 			FileOutputStream fos = new FileOutputStream(file);
 			temp.store(fos, password_t.toCharArray());
+			fos.close();
 			return true;
 			
 		} catch (KeyStoreException | NoSuchProviderException | NoSuchAlgorithmException | CertificateException | IOException | UnrecoverableKeyException e) {
 			e.printStackTrace();
+			System.out.println("Error: exportKeypair");
 			return false;
 		}
 		
 	}
-//***********************************************************
+	
+//******************************************************SIGN CHECK METHOD ***************************************************************
+
 	@Override
 	public boolean canSign(String keypair_name) {
 		try {
 			X509Certificate certificate = (X509Certificate) myKeyStore.getCertificate(keypair_name);			
 			
-			if(certificate.getBasicConstraints() == -1){ //notCA
+			if(certificate.getBasicConstraints() == -1){ // notCA
 				return false;
 			}
 			boolean[] keyusage = certificate.getKeyUsage();
 				if(keyusage == null)
 					return true;
 			
-			return keyusage[5];		 // keyusage[5] - cert signing			
+			return keyusage[5];		 // keyusage[5] - cert signing		
+			
 		} catch (KeyStoreException e) {
 			e.printStackTrace();
+			System.out.println("Error: canSign");
 			return false;
 		}
 	}
-//***********************************************************	
+
+//******************************************************CERTIFICATE METHODS***************************************************************
 	
 	@Override
 	public boolean importCertificate(String file, String keypair_name) {
 		try {
-			FileInputStream fis = new FileInputStream(file);
-			
+						
 			if(myKeyStore.containsAlias(keypair_name))
 				return false;
-			 X509Certificate certificate =  (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(fis);
+			
+			FileInputStream fis = new FileInputStream(file);
+			
+			X509Certificate certificate =  (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(fis);
+			
 			myKeyStore.setCertificateEntry(keypair_name, certificate);
+			
 			FileOutputStream fos = new FileOutputStream(fileKeyStore);
 			myKeyStore.store(fos, password);
+			
 			fis.close();
 			fos.close();
 			return true;
 		} catch (KeyStoreException | CertificateException | NoSuchAlgorithmException | IOException e) {
 			e.printStackTrace();
+			System.out.println("Error: importCertificate");
 		}
 		
 		return false;
 	}
 	
 	@Override
-	public boolean exportCertificate(String arg0, String arg1, int arg2, int arg3) {
-		
-		return false;
-	}
+	public boolean exportCertificate(String file, String keypair_name, int encoding, int format) {
+			FileOutputStream fos;	
+			switch(encoding){			
+			case Constants.DER:
+			{
+				if( format == Constants.HEAD){
+					try {
+						java.security.cert.Certificate cert = myKeyStore.getCertificate(keypair_name);				
+						fos = new FileOutputStream(file);
+						fos.write(cert.getEncoded());				
+						fos.flush();
+					} catch (KeyStoreException | CertificateEncodingException | IOException e) {
+						e.printStackTrace();
+					}
+					
+				}else if(format == Constants.CHAIN){					
+					return false;
+				}
+				break;
+			}
+			case Constants.PEM:
+			{
+				if(format == Constants.HEAD ){
+					try {
+						java.security.cert.Certificate cer = myKeyStore.getCertificate(keypair_name);
+						fos = new FileOutputStream(file);
+						OutputStreamWriter osw = new OutputStreamWriter(fos);
+						JcaPEMWriter pemWriter = new JcaPEMWriter(osw);
+						
+						pemWriter.writeObject(cer);
+						pemWriter.flush();
+						pemWriter.close();
+					} catch (KeyStoreException | IOException e) {
+						e.printStackTrace();
+					}
+					
+				}else if (format == Constants.CHAIN) {
+					try {
+						java.security.cert.Certificate[] chain = myKeyStore.getCertificateChain(keypair_name);
+						if(chain != null){
+							fos = new FileOutputStream(file);
+							OutputStreamWriter osw = new OutputStreamWriter(fos);
+							JcaPEMWriter pemWriter = new JcaPEMWriter(osw);
+							
+							for(int i = 0; i < chain.length; i++){
+								pemWriter.writeObject(chain[i]);
+							}
+							pemWriter.flush();
+							pemWriter.close();
+						}
+					} catch (KeyStoreException | IOException e) {
+						e.printStackTrace();
+					}
+					
+				}
+				break;
+			}
+			}
+		return true;
+}
 	
 
-//*************************************************************
+//******************************************************DESCRIBES METHODS***************************************************************
+
 	@Override
 	public String getCertPublicKeyParameter(String keypair_name) {
 		try {
 			X509Certificate keypair = (X509Certificate) myKeyStore.getCertificate(keypair_name);
 			PublicKey publicKey = keypair.getPublicKey();
+			
 			if(publicKey instanceof DSAPublicKey){
 				DSAPublicKey dsaKey = (DSAPublicKey) publicKey;
-				return Integer.toString(((DSAPublicKey) publicKey).getY().bitLength());
+				return Integer.toString(dsaKey.getY().bitLength());
 			}
+			
 			return null;
 		} catch (KeyStoreException e) {
 			e.printStackTrace();
 			return null;
 		}
-		
-		
 	}
 
 	@Override
@@ -393,20 +474,49 @@ public class MyCode extends CodeV3 {
 		}
 	}
 
-//***************************************************************
+//******************************************************CA METHOD***************************************************************
+	@Override
+	public boolean importCAReply(String file, String keypair_name) {
+		try {
+			FileInputStream fis = new FileInputStream(file);
+			CertificateFactory fact = CertificateFactory.getInstance("X.509");
+			DataInputStream dis = new DataInputStream(fis);
+			
+			CMSSignedData cms = new CMSSignedData(fis);
+			Collection<X509Certificate> collection = (Collection<X509Certificate>) fact.generateCertificate(dis);
+			
+			Store<X509CertificateHolder> temp_store = cms.getCertificates();
+			Collection<X509CertificateHolder> cert_holders = temp_store.getMatches(null);
+			X509Certificate[] chain = new X509Certificate[cert_holders.size()];
+			int i = 0;
+			for(X509CertificateHolder t: cert_holders){
+				chain[i++] = new JcaX509CertificateConverter().setProvider(new BouncyCastleProvider()).getCertificate(t);
+			}
+			
+			myKeyStore.setKeyEntry(keypair_name, myKeyStore.getKey(keypair_name, password), password,  chain);
+			
+			FileOutputStream fos = new FileOutputStream(fileKeyStore);
+			myKeyStore.store(fos, password);
+			
+			fos.close();
+			fis.close();
+			dis.close();
+			return true;
+		} catch (CertificateException | IOException | CMSException | UnrecoverableKeyException | KeyStoreException | NoSuchAlgorithmException e) {
+			e.printStackTrace();
+			System.out.println("Error: importCAReply");
+		}
+		
+		return false;
+	}
 	
+//******************************************************CSR METHODS***************************************************************
 	@Override
 	public boolean exportCSR(String arg0, String arg1, String arg2) {
 		// TODO Auto-generated method stub
 		return false;
 	}
-
-	@Override
-	public boolean importCAReply(String arg0, String arg1) {
-		// TODO Auto-generated method stub
-		return false;
-	}
-
+	
 	@Override
 	public String importCSR(String arg0) {
 		// TODO Auto-generated method stub
@@ -418,5 +528,9 @@ public class MyCode extends CodeV3 {
 		// TODO Auto-generated method stub
 		return false;
 	}
+
+	
+
+	
 
 }
