@@ -1,6 +1,7 @@
 package implementation;
 
 import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -8,6 +9,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.math.BigInteger;
+import java.security.InvalidKeyException;
 import java.security.Key;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -15,6 +17,7 @@ import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
+import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
@@ -23,6 +26,7 @@ import java.security.cert.*;
 import java.security.interfaces.DSAPublicKey;
 import java.security.interfaces.RSAPublicKey;
 import java.util.Collection;
+import java.util.Date;
 import java.util.Enumeration;
 import java.util.Set;
 
@@ -39,18 +43,31 @@ import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNamesBuilder;
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.cert.CertIOException;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.cms.CMSException;
+import org.bouncycastle.cms.CMSProcessableByteArray;
 import org.bouncycastle.cms.CMSSignedData;
+import org.bouncycastle.cms.CMSSignedDataGenerator;
+import org.bouncycastle.cms.CMSTypedData;
+import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.ContentVerifierProvider;
 import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
+import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
+import org.bouncycastle.pkcs.PKCS10CertificationRequest;
+import org.bouncycastle.pkcs.PKCSException;
+import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequest;
+import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 import org.bouncycastle.util.Store;
 
 import code.GuiException;
@@ -62,6 +79,8 @@ public class MyCode extends CodeV3 {
 	private char[] password = "root".toCharArray();
 	private Enumeration<String> keyPairs; 
 	private File fileKeyStore = new File("lokKeyStore.p12");
+	private PKCS10CertificationRequest importedCSR;
+	
 	
 	public MyCode(boolean[] algorithm_conf, boolean[] extensions_conf, boolean extensions_rules) throws GuiException {
 		super(algorithm_conf, extensions_conf, extensions_rules);
@@ -512,25 +531,130 @@ public class MyCode extends CodeV3 {
 	
 //******************************************************CSR METHODS***************************************************************
 	@Override
-	public boolean exportCSR(String arg0, String arg1, String arg2) {
-		// TODO Auto-generated method stub
+	public boolean exportCSR(String file, String keypair_name, String algorithm) {
+		
+		try {
+			X509Certificate cert = (X509Certificate) myKeyStore.getCertificate(keypair_name);
+			
+			if(cert == null)
+				return false;
+			
+			FileOutputStream fos = new FileOutputStream(file);
+			
+			JcaPKCS10CertificationRequestBuilder p10build = new JcaPKCS10CertificationRequestBuilder(cert.getSubjectX500Principal(), cert.getPublicKey());
+			
+			JcaContentSignerBuilder csb = new JcaContentSignerBuilder(algorithm);
+			
+			PrivateKey pk = (PrivateKey) myKeyStore.getKey(keypair_name, password);
+			
+			ContentSigner csign = csb.build(pk);
+			
+			DataOutputStream dos = new DataOutputStream(fos);
+			
+			PKCS10CertificationRequest csr = p10build.build(csign);
+			
+			dos.write(csr.getEncoded());
+			
+			dos.flush();
+			dos.close();
+			fos.close();
+			
+			return true;
+		} catch (KeyStoreException | UnrecoverableKeyException | NoSuchAlgorithmException | OperatorCreationException | IOException e) {
+			e.printStackTrace();
+		}
+		
 		return false;
 	}
 	
 	@Override
-	public String importCSR(String arg0) {
-		// TODO Auto-generated method stub
+	public String importCSR(String file) {
+			try {
+				FileInputStream fis = new FileInputStream(file);
+				DataInputStream dis = new DataInputStream(fis);
+				byte[] data = new byte[dis.available()];
+				dis.readFully(data);
+				importedCSR = new PKCS10CertificationRequest(data);
+				String info = certificateInformation(importedCSR);
+				
+				ContentVerifierProvider prov = new JcaContentVerifierProviderBuilder().build(importedCSR.getSubjectPublicKeyInfo());
+				
+				if(!importedCSR.isSignatureValid(prov)){
+					importedCSR = null;
+					return null;
+				}
+				
+				
+				
+				return info;
+			} catch ( IOException | OperatorCreationException | PKCSException e) {
+				e.printStackTrace();
+			}
+			
 		return null;
 	}
 
 	@Override
-	public boolean signCSR(String arg0, String arg1, String arg2) {
-		// TODO Auto-generated method stub
+	public boolean signCSR(String file, String keypair_name, String algorithm) {
+		
+		try {
+			Key issuerKey = myKeyStore.getKey(keypair_name, password);
+			if(importedCSR == null)
+				return false;
+			
+			X500Name subject = importedCSR.getSubject();
+			X500Name issuer = new JcaX509CertificateHolder((X509Certificate) myKeyStore.getCertificate(keypair_name)).getSubject();
+			
+			BigInteger serial = new BigInteger(access.getSerialNumber());
+			Date notBefore = access.getNotBefore();
+			Date notAfter = access.getNotAfter();
+			PublicKey csrPublic = (PublicKey) new JcaPKCS10CertificationRequest(importedCSR).setProvider(new BouncyCastleProvider()).getPublicKey();
+			X509v3CertificateBuilder certBuild = new JcaX509v3CertificateBuilder(issuer, serial, notBefore, notAfter, subject, csrPublic);;
+		
+		
+			//add extensions
+			
+			if(access.getVersion() != Constants.V3)
+				return false;
+			
+			ContentSigner conSigner = new JcaContentSignerBuilder(algorithm).build((PrivateKey) issuerKey);
+			X509Certificate cert = new JcaX509CertificateConverter().getCertificate(certBuild.build(conSigner));
+			CMSSignedDataGenerator cmsSG = new CMSSignedDataGenerator();
+			cmsSG.addSignerInfoGenerator(new JcaSignerInfoGeneratorBuilder(new JcaDigestCalculatorProviderBuilder().build()).build(conSigner,(X509Certificate) cert));
+			
+			Collection<JcaX509CertificateHolder> chain = null;
+			
+			CMSTypedData cmsTyped = new CMSProcessableByteArray(cert.getEncoded());
+			
+			chain.add(new JcaX509CertificateHolder(cert));
+			
+			for(java.security.cert.Certificate c: myKeyStore.getCertificateChain(keypair_name)){
+				chain.add(new JcaX509CertificateHolder((X509Certificate) c));
+			}
+			cmsSG.addCertificates((Store) chain);
+			
+			FileOutputStream fos = new FileOutputStream(file);
+			fos.write(cmsSG.generate(cmsTyped).getEncoded());
+			fos.flush();
+			fos.close();
+			
+			return true;
+		} catch (UnrecoverableKeyException | KeyStoreException | NoSuchAlgorithmException | InvalidKeyException | OperatorCreationException | CertificateException | CMSException | IOException e) {
+			e.printStackTrace();
+		}
+		
 		return false;
 	}
 
 	
-
+	private String certificateInformation(PKCS10CertificationRequest infoCSR){
+		String temp, info;
+		info = infoCSR.getSubject().toString();		
+		temp = info.replaceAll(", " , ",").replaceAll("=", "= ,").replaceAll("  ", " ");
+		return temp;
+		
+		
+	}
 	
 
 }
