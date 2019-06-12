@@ -25,9 +25,11 @@ import java.security.UnrecoverableKeyException;
 import java.security.cert.*;
 import java.security.interfaces.DSAPublicKey;
 import java.security.interfaces.RSAPublicKey;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
 import java.util.Enumeration;
+import java.util.List;
 import java.util.Set;
 
 import javax.security.auth.x500.X500Principal;
@@ -43,6 +45,7 @@ import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNamesBuilder;
+import org.bouncycastle.asn1.x509.KeyPurposeId;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.cert.CertIOException;
 import org.bouncycastle.cert.X509CertificateHolder;
@@ -96,7 +99,6 @@ public class MyCode extends CodeV3 {
 			if(fileKeyStore.exists()){
 				FileInputStream fis = new FileInputStream(fileKeyStore);
 				myKeyStore.load(fis, password);
-				fis.close();
 			}else{
 				myKeyStore.load(null, null);
 			}
@@ -128,6 +130,7 @@ public class MyCode extends CodeV3 {
 //******************************************************KEYPAIR METHODS***************************************************************
 
 	private void addCertificateExtensions(X509v3CertificateBuilder certBuilder, X509Certificate cert) throws IOException{
+		
 		//******** SAN ********//
 		String[] names = access.getAlternativeName(Constants.SAN);
 		if(names.length > 0){
@@ -146,11 +149,21 @@ public class MyCode extends CodeV3 {
 		}
 		//******** EKU *******//
 		boolean[] ekuval = access.getExtendedKeyUsage();
+		List<KeyPurposeId> extkeyus = new ArrayList<>();
+		if(ekuval[0]) extkeyus.add(KeyPurposeId.anyExtendedKeyUsage);
+		if(ekuval[1]) extkeyus.add(KeyPurposeId.id_kp_serverAuth);
+		if(ekuval[3]) extkeyus.add(KeyPurposeId.id_kp_clientAuth);
+		if(ekuval[4]) extkeyus.add(KeyPurposeId.id_kp_codeSigning);
+		if(ekuval[5]) extkeyus.add(KeyPurposeId.id_kp_emailProtection);
+		if(ekuval[6]) extkeyus.add(KeyPurposeId.id_kp_OCSPSigning);
+		ExtendedKeyUsage eku = new ExtendedKeyUsage(extkeyus.toArray(new KeyPurposeId[0]));
+		certBuilder.addExtension(Extension.extendedKeyUsage, access.isCritical(Constants.EKU), eku);
+		
 		
 		boolean supported = access.isSupported(Constants.EKU);
-		if(supported){
+		//if(supported){
 			//ExtendedKeyUsage eku = ExtendedKeyUsage.getInstance(ASN1ObjectIdentifier.fromByteArray(extVal));
-		}
+		//}
 	}
 
 	@Override
@@ -195,6 +208,7 @@ public class MyCode extends CodeV3 {
 				JcaContentSignerBuilder b = new JcaContentSignerBuilder(access.getPublicKeyDigestAlgorithm());
 				b.setProvider("BC");
 				ContentSigner signer = b.build(keypair.getPrivate());
+				
 				addCertificateExtensions(x509builder,  new JcaX509CertificateConverter().getCertificate(x509builder.build(signer)) );
 				X509Certificate x500cert = new JcaX509CertificateConverter().getCertificate(x509builder.build(signer));
 				
@@ -222,26 +236,64 @@ public class MyCode extends CodeV3 {
 				
 				access.setVersion(keypair.getVersion()-1);
 				access.setSerialNumber(keypair.getSerialNumber().toString());
-				access.setSubject(keypair.getSubjectX500Principal().getName(X500Principal.RFC2253));
+			//	access.setSubject(keypair.getSubjectX500Principal().getName(X500Principal.RFC2253));
 				access.setIssuer(issuer);
 				access.setSubjectSignatureAlgorithm(keypair.getPublicKey().getAlgorithm());
 				access.setIssuerSignatureAlgorithm(keypair.getSigAlgName());
 				access.setNotAfter(keypair.getNotAfter());
 				access.setNotBefore(keypair.getNotBefore());
 				
-				/*Set<String> extOIDs = keypair.getCriticalExtensionOIDs();
+				Set<String> extOIDs = keypair.getCriticalExtensionOIDs();
 
-					for(int i = 0; i < extOIDs.size(); i++){
-						if(extOIDs.equals(Extension.certificatePolicies.toString()))
-							access.setCritical(Constants.CP, true);
-						
-						if(extOIDs.equals(Extension.extendedKeyUsage.toString()))
-							access.setCritical(Constants.EKU, true);
-						
-						if(extOIDs.equals(Extension.subjectAlternativeName.toString()))
-							access.setCritical(Constants.SAN, true);
+				for(int i = 0; i < extOIDs.size(); i++){
+					if(extOIDs.equals(Extension.certificatePolicies.toString()))
+						access.setCritical(Constants.CP, true);
+					
+					if(extOIDs.equals(Extension.extendedKeyUsage.toString()))
+						access.setCritical(Constants.EKU, true);
+					
+					if(extOIDs.equals(Extension.subjectAlternativeName.toString()))
+						access.setCritical(Constants.SAN, true);
+				}
+				
+				Collection<List<?>> subAlt = keypair.getSubjectAlternativeNames();
+				if(subAlt != null) {
+					StringBuilder b = null;
+					for(List<?> n: subAlt) {
+						Integer alT = (Integer) n.get(0);
+						if(alT != 2)
+							continue;
+						String name = (String) n.get(1);
+						if(b == null)
+							b = new StringBuilder(name);
+						else {
+							b.append(",");
+							b.append(name);
+						}
 					}
-					*/
+					access.setAlternativeName(Constants.SAN, b.toString());
+			
+				}
+				
+				
+				if(keypair.getExtendedKeyUsage() != null) {
+					boolean[] eku = new boolean[7];
+					for(boolean e:eku)
+						e = false;
+					for(String k: keypair.getExtendedKeyUsage()) {
+						if(k.equals(KeyPurposeId.anyExtendedKeyUsage.toString())) eku[0]= true;
+						if(k.equals(KeyPurposeId.id_kp_serverAuth.toString())) eku[1]= true;
+						if(k.equals(KeyPurposeId.id_kp_clientAuth.toString())) eku[2]= true;
+						if(k.equals(KeyPurposeId.id_kp_codeSigning.toString())) eku[3]= true;
+						if(k.equals(KeyPurposeId.id_kp_emailProtection.toString())) eku[4]= true;
+						if(k.equals(KeyPurposeId.id_kp_timeStamping.toString())) eku[5]= true;
+						if(k.equals(KeyPurposeId.id_kp_OCSPSigning.toString())) eku[6]= true;
+
+					}
+					access.setKeyUsage(eku);
+				}				
+					
+					
 				if(keypair.getSubjectX500Principal().equals(keypair.getIssuerX500Principal()))
 					return 0;
 				if(myKeyStore.isKeyEntry(keypair_name))
@@ -249,7 +301,7 @@ public class MyCode extends CodeV3 {
 				
 				return 1;
 				
-			} catch (KeyStoreException e) {
+			} catch (KeyStoreException | CertificateParsingException e) {
 				e.printStackTrace();
 				System.out.println("Error: loadKeypair");
 				return -1;
@@ -263,6 +315,7 @@ public class MyCode extends CodeV3 {
 			FileInputStream fis = new FileInputStream(file);
 			KeyStore temp = KeyStore.getInstance("pkcs12", "BC");
 			temp.load(fis, password_t.toCharArray());
+			
 			if(myKeyStore.containsAlias(keypair_name) || !temp.containsAlias(keypair_name))
 				return false;
 			Enumeration<String> alijasi = temp.aliases();
