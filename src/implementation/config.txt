@@ -1,0 +1,6 @@
+RSA
+DSA
+extended key usage
+subject alternative name
+certificate policies
+extensions rules

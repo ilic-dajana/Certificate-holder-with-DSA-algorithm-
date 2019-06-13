@@ -169,7 +169,6 @@ public class MyCode extends CodeV3 {
 	@Override
 	public boolean saveKeypair(String keypair_name) {
 			try {
-				keypair_name = keypair_name.toLowerCase();
 				
 				if(myKeyStore.containsAlias(keypair_name))
 					return false;
@@ -179,25 +178,27 @@ public class MyCode extends CodeV3 {
 				
 				if(access.getPublicKeyAlgorithm() != "DSA")
 					return false;
-				String subject = access.getSubject();
+
 				String serial = access.getSerialNumber(); 
 				BigInteger serialNmbr = new BigInteger(serial);
 				X500NameBuilder builder = new X500NameBuilder();
 				
-				if(access.getSubjectCountry() != "")
+				if(!access.getSubjectCountry().equals(""))
 					builder.addRDN(BCStyle.C, access.getSubjectCountry());
-				if(access.getSubjectState() != "")
+				if(!access.getSubjectState().equals(""))
 					builder.addRDN(BCStyle.ST, access.getSubjectState());
-				if(access.getSubjectLocality() != "")
+				if(!access.getSubjectLocality().equals(""))
 					builder.addRDN(BCStyle.L, access.getSubjectLocality());
-				if(access.getSubjectOrganizationUnit() != "")
+				if(!access.getSubjectOrganizationUnit().equals(""))
 					builder.addRDN(BCStyle.OU, access.getSubjectOrganizationUnit());
-				if(access.getSubjectOrganization() != "")
+				if(!access.getSubjectOrganization().equals(""))
 					builder.addRDN(BCStyle.O, access.getSubjectOrganization());
-				if(access.getSubjectCommonName() != "")
+				if(!access.getSubjectCommonName().equals(""))
 					builder.addRDN(BCStyle.CN, access.getSubjectCommonName());
 				
 				X500Name X500name = builder.build();
+				
+				System.out.println(X500name.toString());
 				
 				KeyPairGenerator generator = KeyPairGenerator.getInstance("DSA", "BC");
 				generator.initialize(Integer.parseInt(access.getPublicKeyParameter()), new SecureRandom());
@@ -236,7 +237,7 @@ public class MyCode extends CodeV3 {
 				
 				access.setVersion(keypair.getVersion()-1);
 				access.setSerialNumber(keypair.getSerialNumber().toString());
-			//	access.setSubject(keypair.getSubjectX500Principal().getName(X500Principal.RFC2253));
+				access.setSubject(keypair.getSubjectX500Principal().getName(X500Principal.RFC2253));
 				access.setIssuer(issuer);
 				access.setSubjectSignatureAlgorithm(keypair.getPublicKey().getAlgorithm());
 				access.setIssuerSignatureAlgorithm(keypair.getSigAlgName());
@@ -277,7 +278,7 @@ public class MyCode extends CodeV3 {
 				
 				
 				if(keypair.getExtendedKeyUsage() != null) {
-					boolean[] eku = new boolean[7];
+					boolean[] eku = new boolean[8];
 					for(boolean e:eku)
 						e = false;
 					for(String k: keypair.getExtendedKeyUsage()) {
